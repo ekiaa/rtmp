@@ -1,0 +1,27 @@
+-define(BINARY,		0).        % Raw type: binary
+-define(STRING,		1).        % Raw type: utf8 string
+-define(FLOATNANS,	4).        % Raw type: Not float values
+
+-define(AMF0_NUMBER,        16#00).
+-define(AMF0_BOOL,          16#01).
+-define(AMF0_STRING,        16#02).
+-define(AMF0_OBJECT,        16#03).
+-define(AMF0_MOVIECLIP,     16#04).
+-define(AMF0_NULL,          16#05).
+-define(AMF0_UNDEFINED,     16#06).
+-define(AMF0_REFERENCE,     16#07).
+-define(AMF0_ECMAARRAY,     16#08).
+-define(AMF0_OBJECTEND,     16#09).
+-define(AMF0_STRICTARRAY,   16#0A).
+-define(AMF0_DATE,          16#0B).
+-define(AMF0_LONGSTRING,    16#0C).
+-define(AMF0_UNSUPPORTED,   16#0D).
+-define(AMF0_RECORDSET,     16#0E).
+-define(AMF0_XMLDOCUMENT,   16#0F).
+-define(AMF0_TYPEDOBJECT,   16#10).
+-define(AMF0_AVMPLUSOBJECT, 16#11).
+
+-define(POS_INFINITY, <<0:1,16#7FF:11,0:52>>).
+-define(NEG_INFINITY, <<1:1,16#7FF:11,0:52>>).
+-define(QNAN,         <<0:1,16#7FF:11,1:1,0:51>>).
+-define(SNAN,         <<0:1,16#7FF:11,0:1,1:51>>).

@@ -1,0 +1,13 @@
+{application, rtmp_app, [
+	{description, "RTMP Erlang library"},
+	{vsn, "0.1"},
+	{modules, [
+		rtmp_app
+	]},
+	{registered, [
+		rtmp_app
+	]},
+	{applications, [kernel, stdlib]},
+	{mod, {rtmp_app, []}},
+	{env, []}
+]}.
