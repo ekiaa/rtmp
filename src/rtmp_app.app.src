@@ -1,6 +1,6 @@
 {application, rtmp_app, [
 	{description, "RTMP Erlang library"},
-	{vsn, "0.1"},
+	{vsn, git},
 	{modules, [
 		rtmp_app
 	]},
