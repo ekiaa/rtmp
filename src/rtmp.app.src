@@ -1,13 +1,13 @@
-{application, rtmp_app, [
+{application, rtmp, [
 	{description, "RTMP Erlang library"},
 	{vsn, git},
 	{modules, [
-		rtmp_app
+		rtmp
 	]},
 	{registered, [
-		rtmp_app
+		rtmp
 	]},
 	{applications, [kernel, stdlib]},
-	{mod, {rtmp_app, []}},
+	{mod, {rtmp, []}},
 	{env, []}
 ]}.

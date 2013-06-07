@@ -1,4 +1,4 @@
--define(APPLICATION, rtmp_app).
+-define(APPLICATION, rtmp).
 -define(SERVER, rtmp).
 -define(ACCEPT, rtmp_accept).
 -define(RTMP_ACCEPT, rtmp_accept).

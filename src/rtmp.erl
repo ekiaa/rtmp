@@ -7,15 +7,24 @@
 
 -module(rtmp).
 
+-bahaviour(application).
+
 -include("rtmp.hrl").
 -include("ptcl.hrl").
+
+%% Application callbacks
+
+-export([
+	start/2,
+	stop/1
+]).
 
 %% External API functions
 
 -export([
 	start/0, 
 	stop/0,
-	start/2,
+	start_channel/2,
 	app_request/5,
 	app_response/3,
 	app_error/3,
@@ -42,6 +51,22 @@
 ]).
 
 %%==============================================================================================================================================
+%% Application callbacks
+%%==============================================================================================================================================
+
+start(_Type, _Args) ->
+	?LOG(?MODULE, self(), "start", []),
+%	Res1 = register:start(),
+%	Res2 = register:create(?REGISTER),
+	gproc:start_link(),
+%	?LOG(?MODULE, self(), "register: ~p, ~p", [Res1, Res2]),
+	rtmp_sup:start().
+
+stop(_State) ->
+	ok.
+
+
+%%==============================================================================================================================================
 %% External API functions
 %%==============================================================================================================================================
 
@@ -52,10 +77,10 @@ start() ->
 stop() ->
 	application:stop(?APPLICATION),
 	application:unload(?APPLICATION).
-	
-start(Parent, Socket) ->
+
+start_channel(Parent, Socket) ->
 	rtmp_channel:start(Parent, Socket).
-	
+
 app_request(Channel, GSID, Cmd, Args, TrID) ->
 	gen_server:cast(Channel, {app, {request, GSID, Cmd, Args, TrID}}).
 
