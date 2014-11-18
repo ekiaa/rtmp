@@ -18,7 +18,7 @@
 %%====================================================================
 
 start_link() ->
-	lager:debug("rtmp_event:start_link()"),
+	% lager:debug("rtmp_event:start_link()"),
 	gen_event:start_link({local, ?MODULE}).
 
 add_handler(Handler, Args) ->

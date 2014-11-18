@@ -23,7 +23,8 @@
 %% State record
 -record(state, {
 	socket, %version, client_type, 
-	channel, % must deleted
+	channel,
+	publish,
 	encrypted,
 	keyin, %keyout, 
 	% decode, % must deleted
@@ -39,8 +40,9 @@
 % received: length of received data from client
 % sended: received value sended to client
 
--record(cs, {stream, sid, csid, ts, tsd, len=0, type, received=0, 
-	csize=?RTMP_CONST_CHUNK_SIZE, 
+-record(cs, {stream, sid, csid, ts, tsd, len=0, type, ref, 
+	received = 0, 
+	csize = ?RTMP_CONST_CHUNK_SIZE, 
 	data = <<>>}).
 -define(CS, CS#cs). %{}
 
@@ -134,7 +136,7 @@ handle_info(Info, State) ->
 
 terminate(Reason, State) ->
 	catch gen_tcp:close(?State.socket),
-	lager:debug("terminate:~n~p", [Reason]),
+	lager:debug("terminate: ~p", [Reason]),
 	ok.
 
 %%--------------------------------------------------------------------
@@ -171,33 +173,34 @@ decode(Data, State) ->
 	end.
 
 %% Basic header
-decode(bh, State, CS, <<>>) ->											{ok, ?State{decode_state = bh, chunk_stream = CS, buffer = <<>>}};
-decode(bh, State, CS, <<Fmt:2, 0:6, CSID:8, Buf/binary>>) ->			decode({csid, Fmt, CSID}, State, CS, Buf);
-decode(bh, State, CS, <<Fmt:2, 1:6, CSID:16, Buf/binary>>) ->			decode({csid, Fmt, CSID}, State, CS, Buf);
-decode(bh, State, CS, <<Fmt:2, CSID:6, Buf/binary>>) when CSID > 1 ->	decode({csid, Fmt, CSID}, State, CS, Buf);
-decode(bh, State, CS, Buf) ->											{ok, ?State{decode_state = bh, chunk_stream = CS, buffer = Buf}};
+decode(bh, State, CS, <<>>) 										-> {ok, ?State{decode_state = bh, chunk_stream = CS, buffer = <<>>}};
+decode(bh, State, CS, <<Fmt:2, 0:6, CSID:8, Buf/binary>>)			-> decode({csid, Fmt, CSID}, State, CS, Buf);
+decode(bh, State, CS, <<Fmt:2, 1:6, CSID:16, Buf/binary>>)			-> decode({csid, Fmt, CSID}, State, CS, Buf);
+decode(bh, State, CS, <<Fmt:2, CSID:6, Buf/binary>>) when CSID > 1	-> decode({csid, Fmt, CSID}, State, CS, Buf);
+decode(bh, State, CS, Buf)											-> {ok, ?State{decode_state = bh, chunk_stream = CS, buffer = Buf}};
 
 %% Chunk stream ID
 decode({csid, Fmt, CSID}, State, undefined, Buf) ->
-	NewCS = #cs{csid = CSID},
+	NewCS = #cs{csid = CSID, ref = erlang:make_ref()},
 	decode({mh, Fmt}, ?State{list = [NewCS | ?State.list]}, NewCS, Buf);
 decode({csid, Fmt, CSID}, State, CS, Buf) when ?CS.csid /= CSID ->
-	case lists:keyfind(?State.csid, 4, ?State.list) of
+	case lists:keyfind(CSID, 4, ?State.list) of
 		false ->
-			NewCS = #cs{csid = CSID},
+			NewCS = #cs{csid = CSID, ref = erlang:make_ref()},
 			List = lists:keyreplace(?CS.csid, 4, ?State.list, CS),
 			decode({mh, Fmt}, ?State{list = [NewCS | List]}, NewCS, Buf);
 		NextCS ->
 			List = lists:keyreplace(?CS.csid, 4, ?State.list, CS),
 			decode({mh, Fmt}, ?State{list = List}, NextCS, Buf)
 	end;
-decode({csid, Fmt, _}, State, CS, Buf) -> decode({mh, Fmt}, State, CS, Buf);
+decode({csid, Fmt, _CSID}, State, CS, Buf) -> 
+	decode({mh, Fmt}, State, CS, Buf);
 	
 %% Message header
 decode({mh, 0}, State, CS, <<Ts:24, Len:24, Type:8, Sid:8, _Bin:24, Buf/binary>>)	-> decode(cpl, State, ?CS{ts=Ts,   len=Len, type=Type, sid=Sid}, Buf);
 decode({mh, 1}, State, CS, <<Tsd:24, Len:24, Type:8, Buf/binary>>)					-> decode(cpl, State, ?CS{tsd=Tsd, len=Len, type=Type}, Buf);
 decode({mh, 2}, State, CS, <<Tsd:24, Buf/binary>>)									-> decode(cpl, State, ?CS{tsd=Tsd}, Buf);
-decode({mh, 3}, State, CS, <<>>)													-> {ok, ?State{decode_state = {mh, 3},   chunk_stream = CS, buffer = <<>>}};
+decode({mh, 3}, State, CS, <<>>)													-> {ok, ?State{decode_state = {mh, 3}, chunk_stream = CS, buffer = <<>>}};
 decode({mh, 3}, State, CS, Buf)														-> decode(cpl, State, CS, Buf);
 decode({mh, Fmt}, State, CS, Buf)													-> {ok, ?State{decode_state = {mh, Fmt}, chunk_stream = CS, buffer = Buf}};
 
@@ -259,15 +262,15 @@ decode(md, State, CS, Buf) ->
 			<<Size:32>> = ?CS.data,
 			decode(send, State, ?CS{data = <<>>}, Buf, {asknowledgement, Size});
 		?RTMP_MSG_AUDIO ->
-			decode(send, State, ?CS{data = <<>>}, Buf, {audio, ?CS.data});
+			decode(send, State, ?CS{data = <<>>}, Buf, {publish, {data, ?CS.data, ?RTMP_MSG_AUDIO}});
 		?RTMP_MSG_VIDEO ->
-			decode(send, State, ?CS{data = <<>>}, Buf, {video, ?CS.data});
+			decode(send, State, ?CS{data = <<>>}, Buf, {publish, {data, ?CS.data, ?RTMP_MSG_VIDEO}});
 		ANY_TYPE ->
 			?LOG(?MODULE, self(), "Unknown type number: ~w", [ANY_TYPE]),
 			{ok, ?State{chunk_stream = CS, buffer = Buf}}
 	end.
 	
-%% Send message to stream
+%% Send message to channel
 decode(send, State, CS, Buf, Message) ->
 	rtmp_channel:message(?State.channel, ?CS.sid, Message),
 	decode(bh, State, CS, Buf).

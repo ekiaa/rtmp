@@ -19,8 +19,8 @@
 -define(AMF3_UNDEFINED,			16#00).
 -define(AMF3_NULL, 				16#01).
 -define(AMF3_FALSE, 			16#02).
--define(AMF3_TRUE, 				16#03).
--define(AMF3_INTEGER, 			16#04).
+-define(AMF3_TRUE,				16#03).
+-define(AMF3_INTEGER,			16#04).
 -define(AMF3_DOUBLE, 			16#05).
 -define(AMF3_STRING, 			16#06).
 -define(AMF3_XML_DOC,	 		16#07).

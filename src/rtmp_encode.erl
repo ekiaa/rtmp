@@ -131,8 +131,8 @@ handle_cast(Msg, State) ->
 %% Description: Handling all non call/cast messages
 %%-----------------------------------------Z--------------------------
 
-handle_info({'DOWN', _MonRef, process, _Pid, _Info}, S) ->
-	{stop, normal, S};
+handle_info({'DOWN', _MonRef, process, _Pid, _Info}, State) ->
+	{stop, normal, State};
 
 handle_info(Info, State) ->
 	lager:error("handle_info: nomatch Info:~n~p", [Info]),
@@ -143,7 +143,7 @@ handle_info(Info, State) ->
 %%--------------------------------------------------------------------
 
 terminate(Reason, _State) ->
-	lager:debug("terminate:~n~p", [Reason]),
+	lager:debug("terminate: ~p", [Reason]),
 	ok.
 
 %%--------------------------------------------------------------------
