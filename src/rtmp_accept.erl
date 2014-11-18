@@ -1,31 +1,31 @@
-%%%---------------------------------------------------------------------------------------------------------------------------------------------
-%%% File        : rtmp_accept.erl
-%%% Author      : Ekimov Artem <ekimov-artem@ya.ru>
-%%% Description : To accept new connection for RTMP stream
-%%% Created     : 21.02.2010
-%%%---------------------------------------------------------------------------------------------------------------------------------------------
+%%====================================================================
+%% Description : Accept new connection for RTMP channels
+%%====================================================================
 
 -module(rtmp_accept).
+-copyright("LiveTex").
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
+-date("2013-09-10").
+-version("0.1").
 
--author('ekimov-artem@ya.ru').
+%%--------------------------------------------------------------------
 
 -behaviour(gen_server).
 
 -include("rtmp.hrl").
 
-%% API
-
+%% API functions
 -export([start/0, start_link/0, stop/0]).
 
-%% gen_server callbacks
-
+%% supervisor callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--record(state, {name, srv, sup, port, lsock, tref}).
+%% State record
+-record(state, {name, srv, sup, lport, lsock, tref}).
 
-%%==============================================================================================================================================
+%%====================================================================
 %% API
-%%==============================================================================================================================================
+%%====================================================================
 
 start() ->
 	start_link().
@@ -36,106 +36,93 @@ start_link() ->
 stop() ->
 	gen_server:call(?MODULE, stop).
 
-%%==============================================================================================================================================
+%%====================================================================
 %% gen_server callbacks
-%%==============================================================================================================================================
+%%====================================================================
 
-%%----------------------------------------------------------------------------------------------------------------------------------------------
-%% Function    : init() -> 
-%%                   {ok, State}
+%%--------------------------------------------------------------------
 %% Description : Initiates the accepter
-%%----------------------------------------------------------------------------------------------------------------------------------------------
+%%--------------------------------------------------------------------
 
 init([]) ->
-	?LOG(?MODULE, self(), "init", []),
-	{ok, #state{}};
+	lager:debug("Start rtmp_accept"),
+	gen_server:cast(self(), listen),
+	Port = rtmp:get_env(rtmp_listen_port, 1935),
+	{ok, #state{lport = Port}};
 	
 init(Args) ->
-	{stop, {error, {init, Args}}}.
+	lager:error("init: nomatch Args:~n~p", [Args]),
+	{stop, {error, nomatch}}.
 
-%%----------------------------------------------------------------------------------------------------------------------------------------------
-%% Function    : handle_call(Request, From, State) -> 
-%%                   {stop, Reason, Reply, State} |
-%% Request     : stop
+%%--------------------------------------------------------------------
 %% Description : Handling call stop message
-%%----------------------------------------------------------------------------------------------------------------------------------------------
+%%--------------------------------------------------------------------
 
-handle_call({start_accept, Server, Port}, _From, S) ->
-	case gen_tcp:listen(Port, [binary, {active, false}, {nodelay, true}]) of
-		{ok, LSock} ->
-			?LOG(?MODULE, self(), "listen port ~w: ok", [Port]),
-			gen_server:cast(self(), accept),
-			{reply, ok, S#state{srv = Server, port = Port, lsock = LSock}};
-		{error, Reason} ->
-			?LOG(?MODULE, self(), "listen port ~w: {error, ~w}", [Reason]),
-			{reply, {error, Reason}, S}
-	end;
-
-handle_call(stop, _From, S) ->
-	{stop, normal, ok, S};
+handle_call(stop, _From, State) ->
+	lager:debug("handle_call: stop"),
+	{stop, normal, ok, State};
 	
-handle_call(_Request, _From, State) ->
-	Error = {error, {no_matching, handle_cast}},
+handle_call(Request, _From, State) ->
+	lager:error("handle_call: nomatch Request:~n~p", [Request]),
+	Error = {error, nomatch},
 	{stop, Error, Error, State}.
 
-%%----------------------------------------------------------------------------------------------------------------------------------------------
-%% Function    : handle_cast(Msg, State) -> 
-%%                   {stop, Reason, State}
-%% Message     : {accept_error, Reason}
+%%--------------------------------------------------------------------
 %% Description : Handling cast error message from accepter
-%%----------------------------------------------------------------------------------------------------------------------------------------------
+%%--------------------------------------------------------------------
 
-handle_cast(accept, S) ->
-	case gen_tcp:accept(S#state.lsock, 1000) of
-		{ok, Socket} ->
-			gen_server:cast(S#state.srv, {rtmp, ?MODULE, accept, Socket}),
+handle_cast(listen, State) ->
+	case gen_tcp:listen(?State.lport, [binary, {active, false}, {nodelay, true}]) of
+		{ok, LSock} ->
+			lager:debug("Listen port: ~p", [?State.lport]),
 			gen_server:cast(self(), accept),
-			{noreply, S};
-		{error, timeout} ->
-			gen_server:cast(self(), accept),
-			{noreply, S};
+			{noreply, ?State{lsock = LSock}};
+		{error, eaddrinuse} ->
+			lager:debug("handle_cast: gen_tcp:listen() error: eaddrinuse"),
+			timer:apply_after(5000, gen_server, cast, [self(), listen]),
+			{noreply, State};
 		{error, Reason} ->
-			?LOG(?MODULE, self(), "accept: {error, ~w}", [Reason]),
-			{stop, {error, Reason}, S}
+			lager:error("handle_cast: gen_tcp:listen() error:~n~p", [Reason]),
+			{stop, {error, Reason}, State}
 	end;
 
-handle_cast(_Msg, State) ->
-	{stop, {error, {no_matching, handle_cast}}, State}.
+handle_cast(accept, State) ->
+	case gen_tcp:accept(?State.lsock, 5000) of
+		{ok, Socket} ->
+			rtmp_channel:start(Socket),
+			gen_server:cast(self(), accept),
+			{noreply, State};
+		{error, timeout} ->
+			gen_server:cast(self(), accept),
+			{noreply, State};
+		{error, Reason} ->
+			lager:error("handle_cast: gen_tcp:accept() error:~n~p", [Reason]),
+			{stop, {error, Reason}, State}
+	end;
 
-%%----------------------------------------------------------------------------------------------------------------------------------------------
-%% Function    : handle_info(Info, State) -> 
-%%                   {noreply, State} |
-%%                   {noreply, State, Timeout} |
-%%                   {stop, Reason, State}
-%% Info        : 
+handle_cast(Msg, State) ->
+	lager:error("handle_cast: nomatch Msg:~n~p", [Msg]),
+	{stop, {error, nomatch}, State}.
+
+%%--------------------------------------------------------------------
 %% Description : Handling all non call/cast messages
-%%----------------------------------------------------------------------------------------------------------------------------------------------
+%%--------------------------------------------------------------------
 
-handle_info(_Info, State) ->
-	{stop, {error, {no_matching, handle_info}}, State}.
+handle_info(Info, State) ->
+	lager:error("handle_info: nomatch Info:~n~p", [Info]),
+	{stop, {error, nomatch}, State}.
 
-%%----------------------------------------------------------------------------------------------------------------------------------------------
-%% Function    : terminate(Reason, State) -> void()
-%% Reason      : 
-%% Description : This function is called by a gen_server when it is about to terminate
-%%----------------------------------------------------------------------------------------------------------------------------------------------
+%%--------------------------------------------------------------------
+%% Description : Terminate gen_server
+%%--------------------------------------------------------------------
 
 terminate(Reason, _State) ->
-	?LOG(?MODULE, self(), "terminate: ~p", [Reason]),
+	lager:debug("terminate:~n~p", [Reason]),
 	ok.
 
-%%----------------------------------------------------------------------------------------------------------------------------------------------
-%% Function    : code_change(OldVsn, State, Extra) -> {ok, NewState}
+%%--------------------------------------------------------------------
 %% Description : Convert process state when code is changed
-%%----------------------------------------------------------------------------------------------------------------------------------------------
+%%--------------------------------------------------------------------
 
 code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
-
-%%==============================================================================================================================================
-%% Internal functions
-%%==============================================================================================================================================
-
-%%%---------------------------------------------------------------------------------------------------------------------------------------------
-%%% End of file : rtmp_accept.erl
-%%%---------------------------------------------------------------------------------------------------------------------------------------------

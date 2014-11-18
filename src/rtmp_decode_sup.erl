@@ -1,22 +1,23 @@
-%%%-------------------------------------------------------------------
-%%% File        : rtmp_decode_sup.erl
-%%% Author      : Artem A. Ekimov <ekimov-artem@ya.ru>
-%%% Description : Supervisor API and callbacks module
-%%% Created     : 28.04.2012
-%%%-------------------------------------------------------------------
+%%====================================================================
+%% Description: RTMP application supervisor for rtmp_decode
+%%====================================================================
 
 -module(rtmp_decode_sup).
+-copyright("LiveTex").
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
+-date("2013-09-10").
+-version("0.1").
+
+%%--------------------------------------------------------------------
 
 -bahaviour(supervisor).
 
 -include("rtmp.hrl").
 
 %% API functions
-
--export([start/0, start_link/0]).
+-export([start/0, start_link/0, start_decode/1]).
 
 %% supervisor callbacks
-
 -export([init/1]).
 
 %%====================================================================
@@ -29,13 +30,16 @@ start() ->
 start_link() ->
 	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+start_decode(Args) ->
+	supervisor:start_child(?MODULE, Args).
+
 %%====================================================================
 %% supervisor callbacks
 %%====================================================================
 
 init([]) ->
 	{ok, {{simple_one_for_one, 1, 10}, [
-		{undefined, {rtmp_decode, start, []}, temporary, 1000, worker, [rtmp_decode]}
+		{undefined, {rtmp_decode, start_link, []}, temporary, 1000, worker, [rtmp_decode]}
 	]}}.
 
 	

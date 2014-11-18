@@ -24,7 +24,6 @@
 -export([
 	start/0, 
 	stop/0,
-	start_channel/2,
 	app_request/5,
 	app_response/3,
 	app_error/3,
@@ -32,10 +31,7 @@
 ]).
 
 -export([
-	start_accept/2,
-	start_send/2,
-	start_recv/2,
-	start_decode/1,
+	get_env/2,
 	srv_request/4,
 	srv_response/3,
 	srv_error/3,
@@ -47,7 +43,9 @@
 	log/4,
 	stream/0,
 	stream/1,
-	streams/1
+	streams/1,
+	string/1,
+	get_id/0
 ]).
 
 %%==============================================================================================================================================
@@ -55,11 +53,6 @@
 %%==============================================================================================================================================
 
 start(_Type, _Args) ->
-	?LOG(?MODULE, self(), "start", []),
-%	Res1 = register:start(),
-%	Res2 = register:create(?REGISTER),
-	gproc:start_link(),
-%	?LOG(?MODULE, self(), "register: ~p, ~p", [Res1, Res2]),
 	rtmp_sup:start().
 
 stop(_State) ->
@@ -78,8 +71,8 @@ stop() ->
 	application:stop(?APPLICATION),
 	application:unload(?APPLICATION).
 
-start_channel(Parent, Socket) ->
-	rtmp_channel:start(Parent, Socket).
+% start_channel(Parent, Socket) ->
+% 	rtmp_channel:start(Parent, Socket).
 
 app_request(Channel, GSID, Cmd, Args, TrID) ->
 	gen_server:cast(Channel, {app, {request, GSID, Cmd, Args, TrID}}).
@@ -97,17 +90,17 @@ app_notify(Channel, GSID, Cmd, Args) ->
 %% Internal API functions
 %%==============================================================================================================================================
 
-start_accept(Parent, Port) ->
-	gen_server:call(?ACCEPT, {start_accept, Parent, Port}).
+% start_accept(Parent, Port) ->
+% 	gen_server:call(?ACCEPT, {start_accept, Parent, Port}).
 
-start_send(Channel, Socket) ->
-	supervisor:start_child(?SEND_SUP, [Channel, Socket]).
+% start_send(Channel, Socket) ->
+% 	supervisor:start_child(?SEND_SUP, [Channel, Socket]).
 	
-start_recv(Channel, Socket) ->
-	supervisor:start_child(?RECV_SUP, [Channel, Socket]).
+% start_recv(Channel, Socket) ->
+% 	supervisor:start_child(?RECV_SUP, [Channel, Socket]).
 	
-start_decode(Channel) ->
-	supervisor:start_child(?DECODE_SUP, [Channel]).
+% start_decode(Channel) ->
+% 	supervisor:start_child(?DECODE_SUP, [Channel]).
 	
 srv_request(Parent, GSID, Cmd, Args) ->
 	gen_server:call(Parent, {srv, {request, GSID, Cmd, Args}}).
@@ -129,7 +122,7 @@ status(Code, Description, ClientID) ->
 		{{?STRING, "level"}, 		{?STRING, "status"}}, 
 		{{?STRING, "code"}, 		{?STRING, Code}}, 
 		{{?STRING, "description"}, 	{?STRING, Description}},
-		{{?STRING, "clientid"}, 	ClientID}
+		{{?STRING, "clientid"}, 	{?STRING, ClientID}}
 	]}.
 status(Code, Description, Details, ClientID) ->
 	{map, [
@@ -137,8 +130,13 @@ status(Code, Description, Details, ClientID) ->
 		{{?STRING, "code"}, 		{?STRING, Code}}, 
 		{{?STRING, "description"}, 	{?STRING, Description}},
 		{{?STRING, "details"}, 		{?STRING, Details}},
-		{{?STRING, "clientid"}, 	ClientID}
+		{{?STRING, "clientid"}, 	{?STRING, ClientID}}
 	]}.
+
+%%--------------------------------------------------------------------
+
+cmd(?RTMP_CMD_AMF0, {Command, Params}) ->
+	{?RTMP_MSG_COMMAND_AMF0, [Command, 0, null, Params]};
 
 cmd(?RTMP_CMD_AMF0_RESULT_CONNECT, {TrID}) ->
 	Properties = {map, [
@@ -160,7 +158,7 @@ cmd(?RTMP_CMD_AMF0_RESULT_CREATE_STREAM, {TrID, N}) ->
 
 cmd(?RTMP_CMD_AMF0_ONSTATUS_NETSTREAM_PUBLISH_START, {Name, ID}) ->
 	Information = status("NetStream.Publish.Start", Name ++ " is now published.", ID),
-	{?RTMP_MSG_COMMAND_AMF0, response("onStatus", 0, null, Information)};
+	{?RTMP_MSG_COMMAND_AMF3, response("onStatus", 0.0, null, Information)};
 	
 cmd(?RTMP_CMD_AMF0_ONSTATUS_NETSTREAM_UNPUBLISH_SUCCESS, {Name, ID}) ->
 	Information = status("NetStream.Unpublish.Success", Name ++ " is now unpublished.", ID),
@@ -184,6 +182,8 @@ cmd(?RTMP_CMD_AMF0_RTMPSAMPLEACCESS, _) ->
 cmd(_N, _Args) ->
 	{?RTMP_MSG_COMMAND_AMF0, []}.
 	
+%%--------------------------------------------------------------------
+
 log(Module, Pid, Format, Data) ->
 	io:format("~-" ++ ?TITLE_LENGTH ++ "w (~w): " ++ Format ++ "~n", [Module, Pid] ++ Data).
 
@@ -210,13 +210,22 @@ streams(List) ->
 	end, [], List),
 	{ok, Streams}.
 
+get_env(Key, Def) ->
+	case (catch application:get_env(?APPLICATION, Key)) of
+		undefined -> Def;
+		{ok, Val} -> Val;
+		{'EXIT', Reason} ->
+			lager:error("get_env: EXIT:~n~p", [Reason]),
+			Def
+	end.
+
 get_id() ->
 	{A1,A2,A3} = now(),
 	random:seed(A1, A2, A3),
 	get_id(10, []).
 	
 get_id(0, List) ->
-	{?STRING, List};
+	List;
 	
 get_id(N, List) ->
 	get_id(N-1, [get_char() | List]).
@@ -229,3 +238,5 @@ get_char() ->
 		false ->
 			N - 26 + 96
 	end.
+
+string(String) -> {?STRING, String}.

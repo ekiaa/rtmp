@@ -1,51 +1,61 @@
-%%%---------------------------------------------------------------------------------------------------------------------------------------------
-%%% File        : rtmp_decode.erl
-%%% Author      : Ekimov Artem <ekimov-artem@ya.ru>
-%%% Description : RTMP decode API and callbacks
-%%% Created     : 28.04.2012
-%%%---------------------------------------------------------------------------------------------------------------------------------------------
+%%====================================================================
+%%% Description : RTMP connection
+%%====================================================================
 
 -module(rtmp_decode).
+-copyright("LiveTex").
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
+-date("2013-09-10").
+-version("0.1").
 
--author('ekimov-artem@ya.ru').
+%%--------------------------------------------------------------------
 
 -behaviour(gen_server).
 
 -include("rtmp.hrl").
 
 %% API functions
-
--export([start/1, start_link/1, stop/1]).
-
--export([data/2, decode/4, decode/5]).
+-export([start/4, start_link/4, setAckWinSize/2]).
 
 %% gen_server callbacks
-
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--record(state, {channel, lref = 0, list = [], fmt, csid, ns=bh}).
+%% State record
+-record(state, {
+	socket, %version, client_type, 
+	channel, % must deleted
+	encrypted,
+	keyin, %keyout, 
+	% decode, % must deleted
+	received = 0, sended = 0, 
+	lref = 0, 
+	list = [],
+	csid = 2, 
+	ackwinsize = ?RTMP_CONST_ACKNOWLEDGEMENT_WINDOW_SIZE,
+	decode_state = bh,
+	chunk_stream,
+	buffer = <<>>}).
 
-% lref - last referense for chunk stream
-% ns - next state; bh - basic header
+% received: length of received data from client
+% sended: received value sended to client
 
--record(cs, {stream, sid, csid, ts, tsd, len, type, rlen=0, csize=?RTMP_CONST_CHUNK_SIZE, data}).
+-record(cs, {stream, sid, csid, ts, tsd, len=0, type, received=0, 
+	csize=?RTMP_CONST_CHUNK_SIZE, 
+	data = <<>>}).
+-define(CS, CS#cs). %{}
 
 %%====================================================================
 %% API
 %%====================================================================
 
-start(Channel) ->
-	start_link(Channel).
+start(Channel, Socket, Encrypted, KeyIn) ->
+	rtmp_decode_sup:start_decode([Channel, Socket, Encrypted, KeyIn]).
 	
-start_link(Channel) ->
-	gen_server:start_link(?MODULE, Channel, []).
-	
-stop(Pid) ->
-	gen_server:call(Pid, stop).
+start_link(Channel, Socket, Encrypted, KeyIn) ->
+	gen_server:start_link(?MODULE, {Channel, Socket, Encrypted, KeyIn}, []).
 
-%% Set new data for decode
-data(Decode, Data) ->
-	gen_server:cast(Decode, {data, Data}).
+setAckWinSize(Decode, AckWinSize) ->
+	gen_server:cast(Decode, {setAckWinSize, AckWinSize}).
 	
 %%====================================================================
 %% gen_server callbacks
@@ -55,37 +65,57 @@ data(Decode, Data) ->
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
 
-init(Channel) when is_pid(Channel) ->
-	?LOG(?MODULE, self(), "init: ~w", [Channel]),
+init({Channel, Socket, Encrypted, KeyIn}) ->
+	lager:debug("Start rtmp_decode; Channel: ~p; Socket: ~p", [Channel, Socket]),
 	erlang:monitor(process, Channel),
-	gen_server:cast(self(), init),
-	{ok, #state{channel = Channel}};
+	gen_server:cast(self(), recv),
+	{ok, #state{channel = Channel, socket = Socket, encrypted = Encrypted, keyin = KeyIn}};
 
-init(_Args) ->
-	{stop, {error, {?MODULE, self(), no_matching, init}}}.
+init(Args) ->
+	lager:error("init: nomatch Args:~n~p", [Args]),
+	{stop, {error, nomatch}}.
 	
 %%--------------------------------------------------------------------
 %% Description: Handling call messages
 %%--------------------------------------------------------------------
 
-handle_call(_Request, _From, State) ->
-	Error = {error, {?MODULE, self(), no_matching, handle_cast}},
+handle_call(Request, _From, State) ->
+	lager:error("handle_call: nomatch Request:~n~p", [Request]),
+	Error = {error, nomatch},
 	{stop, Error, Error, State}.
 	
 %%--------------------------------------------------------------------
 %% Description: Handling cast messages
 %%--------------------------------------------------------------------
 
-handle_cast(init, S) ->
-	C2 = #cs{stream = S#state.channel, sid = 0, csid = 2, data = <<>>},
-	C3 = #cs{stream = S#state.channel, sid = 0, csid = 3, data = <<>>},
-	{noreply, {S#state{list = [C3, C2]}, C3, <<>>}};
-	
-handle_cast({data, Data}, {S, C, B}) ->
-	?MODULE:decode(S#state.ns, S, C, <<B/binary, Data/binary>>);
+handle_cast(recv, State) ->	
+	case gen_tcp:recv(?State.socket, 0, 1000) of
+		{ok, Data} ->
+			case decode(Data, ackwinsize(State, byte_size(Data))) of
+				{ok, NewState} ->
+					gen_server:cast(self(), recv),
+					{noreply, NewState};
+				{error, Reason} ->
+					lager:error("handle_cast: decode error:~n~p", [Reason]),
+					{stop, {error, Reason}, State}
+			end;
+		{error, timeout} ->
+			gen_server:cast(self(), recv),
+			{noreply, State};
+		{error, closed} ->
+			lager:debug("handle_cast: socket ~p closed", [?State.socket]),
+			{stop, normal, State};
+		{error, Reason} ->
+			lager:error("handle_cast: gen_tcp:recv() error:~n~p", [Reason]),
+			{stop, {error, Reason}, State}
+	end;
 
-handle_cast(_Msg, State) ->
-	{stop, {error, {?MODULE, self(), no_matching, handle_cast}}, State}.
+handle_cast({setAckWinSize, AckWinSize}, State) ->
+	{noreply, ?State{ackwinsize = AckWinSize}};
+
+handle_cast(Msg, State) ->
+	lager:error("handle_cast: nomatch Msg:~n~p~nState: ~p", [Msg, State]),
+	{stop, {error, nomatch}, State}.
 
 %%--------------------------------------------------------------------
 %% Description: Handling all non call/cast messages
@@ -94,15 +124,17 @@ handle_cast(_Msg, State) ->
 handle_info({'DOWN', _MonRef, process, _Pid, _Info}, S) ->
 	{stop, normal, S};
 
-handle_info(_Info, State) ->
-	{stop, {error, {?MODULE, self(), no_matching, handle_info}}, State}.
+handle_info(Info, State) ->
+	lager:error("handle_info: nomatch Info:~n~p", [Info]),
+	{stop, {error, nomatch}, State}.
 	
 %%--------------------------------------------------------------------
 %% Description: terminate process
 %%--------------------------------------------------------------------
 
-terminate(_Reason, _State) ->
-	?LOG(?MODULE, self(), "terminate", []),
+terminate(Reason, State) ->
+	catch gen_tcp:close(?State.socket),
+	lager:debug("terminate:~n~p", [Reason]),
 	ok.
 
 %%--------------------------------------------------------------------
@@ -110,149 +142,132 @@ terminate(_Reason, _State) ->
 %%--------------------------------------------------------------------
 
 code_change(_OldVsn, State, _Extra) ->
-	?LOG(?MODULE, self(), "code_change", []),
 	{ok, State}.
 
 %%--------------------------------------------------------------------
-%%% Internal functions
+%% Internal functions
 %%--------------------------------------------------------------------
 
-decode(bh, S, C, <<>>) ->
-%	?LOG(?MODULE, self(), "fmt ~w, csid ~w, mh: <<>>", [S#state.fmt, S#state.csid]),
-	{noreply, {S#state{ns = bh}, C, <<>>}};
-
-decode(bh, S, C, <<Fmt:2, 0:6, CSID:8, B/binary>>) ->
-%	?LOG(?MODULE, self(), "basic header: <<~w:2, 0:6, ~w:8>>", [Fmt, CSID]),
-	?MODULE:decode(csid, S#state{fmt=Fmt, csid=CSID}, C, B);
-	
-decode(bh, S, C, <<Fmt:2, 1:6, CSID:16, B/binary>>) ->
-%	?LOG(?MODULE, self(), "basic header: <<~w:2, 1:6, ~w:16>>", [Fmt, CSID]),
-	?MODULE:decode(csid, S#state{fmt=Fmt, csid=CSID}, C, B);
-	
-decode(bh, S, C, <<Fmt:2, CSID:6, B/binary>>) ->
-%	?LOG(?MODULE, self(), "basic header: <<~w:2, ~w:6>>", [Fmt, CSID]),
-	?MODULE:decode(csid, S#state{fmt=Fmt, csid=CSID}, C, B);
-
-decode(csid, S, C, B) when S#state.csid /= C#cs.csid ->
-	case lists:keyfind(S#state.csid, 4, S#state.list) of
-		false ->
-		%	?LOG(?MODULE, self(), "new chunck stream: ~w", [S#state.csid]),
-			Cs = #cs{csid = S#state.csid, data = <<>>},
-			List = lists:keyreplace(C#cs.csid, 4, S#state.list, C),
-			?MODULE:decode(mh, S#state{list = [Cs | List]}, Cs, B);
-		Cs ->
-			List = lists:keyreplace(C#cs.csid, 4, S#state.list, C),
-			?MODULE:decode(mh, S#state{list = List}, Cs, B)
-	end;
-
-decode(csid, S, C, B) ->
-	?MODULE:decode(mh, S, C, B);
-	
-decode(mh, S, C, <<Ts:24, Len:24, Type:8, Sid:8, _Bin:24, B/binary>>) when S#state.fmt == 0 ->
-%	?LOG(?MODULE, self(), "fmt ~w, csid ~w, ts ~w, len ~w, type ~w, sid ~w, bin ~w", [S#state.fmt, S#state.csid, Ts, Len, Type, Sid, _Bin]),
-	?MODULE:decode(mng, S, C#cs{ts=Ts, len=Len, type=Type, sid=Sid}, B);
-
-decode(mh, S, C, <<Tsd:24, Len:24, Type:8, B/binary>>) when S#state.fmt == 1 ->
-%	?LOG(?MODULE, self(), "fmt ~w, csid ~w, tsd ~w, len ~w, type ~w", [S#state.fmt, S#state.csid, Tsd, Len, Type]),
-	?MODULE:decode(mng, S, C#cs{tsd=Tsd, len=Len, type=Type}, B);
-
-decode(mh, S, C, <<Tsd:24, B/binary>>) when S#state.fmt == 2 ->
-%	?LOG(?MODULE, self(), "fmt ~w, csid ~w, tsd ~w", [S#state.fmt, S#state.csid, Tsd]),
-	?MODULE:decode(mng, S, C#cs{tsd=Tsd}, B);
-	
-decode(mh, S, C, <<>>) when S#state.fmt == 3 ->
-%	?LOG(?MODULE, self(), "fmt ~w, csid ~w, mh: <<>>", [S#state.fmt, S#state.csid]),
-	{noreply, {S#state{ns = mh}, C, <<>>}};
-
-decode(mh, S, C, B) when S#state.fmt == 3 ->
-%	?LOG(?MODULE, self(), "fmt ~w, csid ~w", [S#state.fmt, S#state.csid]),
-	?MODULE:decode(mng, S, C, B);
-
-decode(mh, S, C, B) ->
-%	?LOG(?MODULE, self(), "fmt ~w, csid ~w, B != <<>>", [S#state.fmt, S#state.csid]),
-	{noreply, {S#state{ns = mh}, C, B}};
-
-decode(mng, S, C, B) when C#cs.stream == undefined ->
-	case rtmp_channel:get_stream(S#state.channel, C#cs.sid) of
-		{ok, Stream} ->
-		%	?LOG(?MODULE, self(), "set stream ~w, sid ~w, csid ~w)", [Stream, C#cs.sid, C#cs.csid]),
-			?MODULE:decode(cpl, S, C#cs{stream = Stream}, B);
-		{error, Reason} ->
-			?LOG(?MODULE, self(), "rtmp_channel:get_stream error: ~w", [Reason]),
-			{stop, normal, {S, C, B}}
-end;
-
-decode(mng, S, C, B) ->
-	?MODULE:decode(cpl, S, C, B);
-
-decode(cpl, S, C, B) when C#cs.len - C#cs.rlen > C#cs.csize ->
-	case C#cs.csize =< byte_size(B) of
+ackwinsize(State, DataSize) ->
+	case ?State.received - ?State.sended >= ?RTMP_CONST_ACKNOWLEDGEMENT_WINDOW_SIZE of
 		true ->
-		%	?LOG(?MODULE, self(), "part packet: len ~w, rlen ~w, <<~w>>", [C#cs.len, C#cs.rlen, byte_size(B)]),
-			{Pl, R} = split_binary(B, C#cs.csize),
-			?MODULE:decode(bh, S, C#cs{rlen = C#cs.rlen + C#cs.csize, data = <<(C#cs.data)/binary, Pl/binary>>}, R);
+			rtmp_channel:ackwinsize(?State.channel, ?State.received),
+			?State{received =  ?State.received + DataSize, sended = ?State.received};
 		false ->
-		%	?LOG(?MODULE, self(), "no data (csize): len ~w, rlen ~w, <<~w>>", [C#cs.len, C#cs.rlen, byte_size(B)]),
-			{noreply, {S#state{ns = cpl}, C, B}}
-	end;
+			?State{received =  ?State.received + DataSize}
+	end.
 
-decode(cpl, S, C, B) ->
-	Len = C#cs.len - C#cs.rlen,
-	case Len =< byte_size(B) of
+%%--------------------------------------------------------------------
+%% Description: Decode RTMP data
+%%--------------------------------------------------------------------
+
+decode(Data, State) ->
+	case ?State.encrypted of
 		true ->
-		%	?LOG(?MODULE, self(), "end packet: len ~w, rlen ~w, <<~w>>", [C#cs.len, C#cs.rlen, byte_size(B)]),
-			{Pl, R} = split_binary(B, Len),
-			?MODULE:decode(md, S, C#cs{rlen = 0, data = <<(C#cs.data)/binary, Pl/binary>>}, R);
+			{NewKeyIn, Bin} = crypto:rc4_encrypt_with_state(?State.keyin, Data),
+			decode(?State.decode_state, ?State{received = ?State.received + byte_size(Data), keyin = NewKeyIn, chunk_stream = undefined, buffer = <<>>}, ?State.chunk_stream, <<(?State.buffer)/binary, Bin/binary>>);
 		false ->
-		%	?LOG(?MODULE, self(), "no data: len ~w, rlen ~w, <<~w>>", [C#cs.len, C#cs.rlen, byte_size(B)]),
-			{noreply, {S#state{ns = cpl}, C, B}}
+			decode(?State.decode_state, ?State{received = ?State.received + byte_size(Data), chunk_stream = undefined, buffer = <<>>}, ?State.chunk_stream, <<(?State.buffer)/binary, Data/binary>>)
+	end.
+
+%% Basic header
+decode(bh, State, CS, <<>>) ->											{ok, ?State{decode_state = bh, chunk_stream = CS, buffer = <<>>}};
+decode(bh, State, CS, <<Fmt:2, 0:6, CSID:8, Buf/binary>>) ->			decode({csid, Fmt, CSID}, State, CS, Buf);
+decode(bh, State, CS, <<Fmt:2, 1:6, CSID:16, Buf/binary>>) ->			decode({csid, Fmt, CSID}, State, CS, Buf);
+decode(bh, State, CS, <<Fmt:2, CSID:6, Buf/binary>>) when CSID > 1 ->	decode({csid, Fmt, CSID}, State, CS, Buf);
+decode(bh, State, CS, Buf) ->											{ok, ?State{decode_state = bh, chunk_stream = CS, buffer = Buf}};
+
+%% Chunk stream ID
+decode({csid, Fmt, CSID}, State, undefined, Buf) ->
+	NewCS = #cs{csid = CSID},
+	decode({mh, Fmt}, ?State{list = [NewCS | ?State.list]}, NewCS, Buf);
+decode({csid, Fmt, CSID}, State, CS, Buf) when ?CS.csid /= CSID ->
+	case lists:keyfind(?State.csid, 4, ?State.list) of
+		false ->
+			NewCS = #cs{csid = CSID},
+			List = lists:keyreplace(?CS.csid, 4, ?State.list, CS),
+			decode({mh, Fmt}, ?State{list = [NewCS | List]}, NewCS, Buf);
+		NextCS ->
+			List = lists:keyreplace(?CS.csid, 4, ?State.list, CS),
+			decode({mh, Fmt}, ?State{list = List}, NextCS, Buf)
+	end;
+decode({csid, Fmt, _}, State, CS, Buf) -> decode({mh, Fmt}, State, CS, Buf);
+	
+%% Message header
+decode({mh, 0}, State, CS, <<Ts:24, Len:24, Type:8, Sid:8, _Bin:24, Buf/binary>>)	-> decode(cpl, State, ?CS{ts=Ts,   len=Len, type=Type, sid=Sid}, Buf);
+decode({mh, 1}, State, CS, <<Tsd:24, Len:24, Type:8, Buf/binary>>)					-> decode(cpl, State, ?CS{tsd=Tsd, len=Len, type=Type}, Buf);
+decode({mh, 2}, State, CS, <<Tsd:24, Buf/binary>>)									-> decode(cpl, State, ?CS{tsd=Tsd}, Buf);
+decode({mh, 3}, State, CS, <<>>)													-> {ok, ?State{decode_state = {mh, 3},   chunk_stream = CS, buffer = <<>>}};
+decode({mh, 3}, State, CS, Buf)														-> decode(cpl, State, CS, Buf);
+decode({mh, Fmt}, State, CS, Buf)													-> {ok, ?State{decode_state = {mh, Fmt}, chunk_stream = CS, buffer = Buf}};
+
+%% Chunk payload
+decode(cpl, State, CS, Buf) when ?CS.len - ?CS.received > ?CS.csize ->
+	case ?CS.csize =< byte_size(Buf) of
+		true ->
+			{Payload, Rest} = split_binary(Buf, ?CS.csize),
+			decode(bh, State, ?CS{received = ?CS.received + ?CS.csize, data = <<(?CS.data)/binary, Payload/binary>>}, Rest);
+		false -> 
+			{ok, ?State{decode_state = cpl, chunk_stream = CS, buffer = Buf}}
+	end;
+decode(cpl, State, CS, Buf) ->
+	Len = ?CS.len - ?CS.received,
+	case Len =< byte_size(Buf) of
+		true ->
+			{Payload, Rest} = split_binary(Buf, Len),
+			decode(md, State, ?CS{received = 0, data = <<(?CS.data)/binary, Payload/binary>>}, Rest);
+		false ->
+			{ok, ?State{decode_state = cpl, chunk_stream = CS, buffer = Buf}}
 	end;
 
-decode(md, S, C, B) ->
-	case C#cs.type of
+%% Message data
+decode(md, State, CS, Buf) ->
+	case ?CS.type of
 		?RTMP_MSG_COMMAND_AMF0 ->
-		%	?LOG(?MODULE, self(), "type RTMP_MSG_COMMAND_AMF0", []),
-			Msg = amf0:decode_args(C#cs.data),
-			?MODULE:decode(send, S, C#cs{data = <<>>}, B, {command, Msg});
+			Msg = amf0:decode_args(?CS.data),
+			decode(send, State, ?CS{data = <<>>}, Buf, {command, Msg});
 		?RTMP_MSG_COMMAND_AMF3 ->
-		%	?LOG(?MODULE, self(), "type RTMP_MSG_COMMAND_AMF3", []),
-			<<Type:8, Data/binary>> = C#cs.data,
-			Msg = case Type of 
+			<<Type:8, Data/binary>> = ?CS.data,
+			Msg = case Type of
 				0 -> amf0:decode_args(Data);
-				3 -> amf:decode(3, Data)
+				3 -> amf:decode(3, Data);
+				Code ->
+					lager:error("decode: nomatch type code for AMF3 command: ~p; Chunk stream:~n~p", [Code, CS]),
+					{error, nomatch}
 			end,
-			?MODULE:decode(send, S, C#cs{data = <<>>}, B, {command, Msg});
+			decode(send, State, ?CS{data = <<>>}, Buf, {command, Msg});
 		?RTMP_PCM_USER_CONTROL_MESSAGE ->
-			<<EventType:16, EventData/binary>> = C#cs.data,
+			<<EventType:16, EventData/binary>> = ?CS.data,
 			case EventType of
 				?RTMP_UCM_STREAM_BEGIN ->
 					<<StreamID:32>> = EventData,
-					?MODULE:decode(send, S, C#cs{data = <<>>}, B, {user_control_message, stream_begin, StreamID});
+					decode(send, State, ?CS{data = <<>>}, Buf, {user_control_message, stream_begin, StreamID});
 				?RTMP_UCM_STREAM_EOF ->
 					<<StreamID:32>> = EventData,
-					?MODULE:decode(send, S, C#cs{data = <<>>}, B, {user_control_message, stream_eof, StreamID});
+					decode(send, State, ?CS{data = <<>>}, Buf, {user_control_message, stream_eof, StreamID});
 				?RTMP_UCM_STREAM_IS_RECORDED ->
 					<<StreamID:32>> = EventData,
-					?MODULE:decode(send, S, C#cs{data = <<>>}, B, {user_control_message, stream_is_recorded, StreamID});
+					decode(send, State, ?CS{data = <<>>}, Buf, {user_control_message, stream_is_recorded, StreamID});
 				?RTMP_UCM_SET_BUFFER_LENGTH ->
 					<<StreamID:32, BufferLength:32>> = EventData,
-					?MODULE:decode(send, S, C#cs{data = <<>>}, B, {user_control_message, set_buffer_length, StreamID, BufferLength})
+					decode(send, State, ?CS{data = <<>>}, Buf, {user_control_message, set_buffer_length, StreamID, BufferLength})
 			end;
 		?RTMP_PCM_ACKNOWLEDGEMENT_WINDOW_SIZE ->
-			<<Size:32>> = C#cs.data,
-			?MODULE:decode(send, S, C#cs{data = <<>>}, B, {asknowledgement_window_size, Size});
+			<<Size:32>> = ?CS.data,
+			decode(send, State, ?CS{data = <<>>}, Buf, {asknowledgement_window_size, Size});
 		?RTMP_PCM_ACKNOWLEDGEMENT ->
-			<<Size:32>> = C#cs.data,
-			?MODULE:decode(send, S, C#cs{data = <<>>}, B, {asknowledgement, Size});
+			<<Size:32>> = ?CS.data,
+			decode(send, State, ?CS{data = <<>>}, Buf, {asknowledgement, Size});
 		?RTMP_MSG_AUDIO ->
-			?MODULE:decode(send, S, C#cs{data = <<>>}, B, {audio, C#cs.data});
+			decode(send, State, ?CS{data = <<>>}, Buf, {audio, ?CS.data});
 		?RTMP_MSG_VIDEO ->
-			?MODULE:decode(send, S, C#cs{data = <<>>}, B, {video, C#cs.data});
+			decode(send, State, ?CS{data = <<>>}, Buf, {video, ?CS.data});
 		ANY_TYPE ->
 			?LOG(?MODULE, self(), "Unknown type number: ~w", [ANY_TYPE]),
-			{noreply, {S, C, B}}
+			{ok, ?State{chunk_stream = CS, buffer = Buf}}
 	end.
 	
-decode(send, S, C, B, M) ->
-	rtmp_stream:client_message(C#cs.stream, M),
-	?MODULE:decode(bh, S, C, B).
+%% Send message to stream
+decode(send, State, CS, Buf, Message) ->
+	rtmp_channel:message(?State.channel, ?CS.sid, Message),
+	decode(bh, State, CS, Buf).

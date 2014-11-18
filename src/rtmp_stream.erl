@@ -1,13 +1,12 @@
-%%%---------------------------------------------------------------------------------------------------------------------------------------------
-%%% File        : rtmp_stream.erl
-%%% Author      : Ekimov Artem <ekimov-artem@ya.ru>
-%%% Description : RTMP stream API and callbacks
-%%% Created     : 28.04.2012
-%%%---------------------------------------------------------------------------------------------------------------------------------------------
+%%====================================================================
+%% Description : RTMP stream API and callbacks
+%%====================================================================
 
 -module(rtmp_stream).
-
--author('ekimov-artem@ya.ru').
+-copyright("LiveTex").
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
+-date("2013-09-11").
+-version("0.1").
 
 -behaviour(gen_server).
 
@@ -15,28 +14,31 @@
 -include("ptcl.hrl").
 
 %% API external functions
-
--export([start/4, start_link/4, stop/1]).
-
+-export([start/3, start_link/3, start/4, start_link/4, stop/1]).
 -export([app_request/4, app_response/4, app_error/4, app_notify/3, client_message/2, data/2]).
 
 %% API internal functions
-
 -export([send_cmd/2, app_message/2, client_msg/2]).
 
 %% gen_server callbacks
-
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
--record(state, {parent, channel, encode, sid, gsid, name, list=[], publish=false, play=false}).
+%% State record
+-record(state, {connection, parent, channel, encode, sid, csid, gsid, name, list=[], publish=false, play=false}).
 
 %%====================================================================
 %% API
 %%====================================================================
 
+start(Connection, StreamID, ChunkStreamID) ->
+	rtmp_stream_sup:start_stream([Connection, StreamID, ChunkStreamID]).
+
 start(Channel, Socket, SID, CSID) ->
 	supervisor:start_child(?STREAM_SUP, [Channel, Socket, SID, CSID]).
 	
+start_link(Connection, StreamID, ChunkStreamID) ->
+	gen_server:start_link(?MODULE, {Connection, StreamID, ChunkStreamID}, []).
+
 start_link(Channel, Socket, SID, CSID) ->
 	gen_server:start_link(?MODULE, {Channel, Socket, SID, CSID}, []).
 	
@@ -79,15 +81,22 @@ init({Channel, Socket, SID, CSID}) ->
 	{ok, GSID} = rtmp:stream(),
 	{ok, #state{channel = Channel, encode = Encode, sid = SID, gsid = GSID}};
 
-init(_Args) ->
-	{stop, {error, {?MODULE, self(), no_matching, init}}}.
+init({Connection, StreamID, ChunkStreamID}) ->
+	lager:debug("Start rtmp_stream; Conn: ~p; SID: ~p; CSID: ~p", [Connection, StreamID, ChunkStreamID]),
+	erlang:monitor(process, Connection),
+	{ok, #state{connection = Connection, sid = StreamID, csid = ChunkStreamID}};
+
+init(Args) ->
+	lager:error("init: nomatch Args:~n~p", [Args]),
+	{stop, {error, nomatch}}.
 	
 %%--------------------------------------------------------------------
 %% Description: Handling call messages
 %%--------------------------------------------------------------------
 
-handle_call(_Request, _From, State) ->
-	Error = {error, {?MODULE, self(), no_matching, handle_cast}},
+handle_call(Request, _From, State) ->
+	lager:error("handle_call: nomatch Request:~n~p", [Request]),
+	Error = {error, nomatch},
 	{stop, Error, Error, State}.
 	
 %%--------------------------------------------------------------------
@@ -118,8 +127,9 @@ handle_cast({data, {video, Data}}, S) ->
 	rtmp_encode:send(S#state.encode, {?RTMP_MSG_VIDEO, Data}),
 	{noreply, S};
 	
-handle_cast(_Msg, State) ->
-	{stop, {error, {?MODULE, self(), no_matching, handle_cast}}, State}.
+handle_cast(Msg, State) ->
+	lager:error("handle_cast: nomatch Msg:~n~p", [Msg]),
+	{stop, {error, nomatch}, State}.
 
 %%--------------------------------------------------------------------
 %% Description: Handling all non call/cast messages
@@ -127,10 +137,10 @@ handle_cast(_Msg, State) ->
 
 handle_info({'DOWN', _MonRef, process, _Pid, _Info}, S) ->
 	{stop, normal, S};
-	
 
-handle_info(_Info, State) ->
-	{stop, {error, {?MODULE, self(), no_matching, handle_info}}, State}.
+handle_info(Info, State) ->
+	lager:error("handle_info: nomatch Info:~n~p", [Info]),
+	{stop, {error, nomatch}, State}.
 	
 %%--------------------------------------------------------------------
 %% Function: terminate(Reason, State) -> void()
@@ -147,9 +157,9 @@ handle_info(_Info, State) ->
 %	?LOG(?MODULE, self(), "terminate: play", []),
 %	ok;
 
-terminate(_Reason, S) ->
-	rtmp_channel:srv_notify(S#state.channel, {?STRING, S#state.gsid}, {?STRING, "terminate"}, null),
-	?LOG(?MODULE, self(), "terminate", []),
+terminate(Reason, _State) ->
+	% rtmp_channel:srv_notify(S#state.channel, {?STRING, S#state.gsid}, {?STRING, "terminate"}, null),
+	lager:debug("terminate:~n~p", [Reason]),
 	ok.
 
 %%--------------------------------------------------------------------
@@ -158,7 +168,6 @@ terminate(_Reason, S) ->
 %%--------------------------------------------------------------------
 
 code_change(_OldVsn, State, _Extra) ->
-	?LOG(?MODULE, self(), "code_change", []),
 	{ok, State}.
 
 %%--------------------------------------------------------------------
@@ -283,3 +292,91 @@ app_message({notify, _Cmd, _Args} = Msg, S) ->
 app_message(Msg, S) ->
 	?LOG(?MODULE, self(), "app_message: unknown message~n~p", [Msg]),
 	{noreply, S}.
+
+% %%--------------------------------------------------------------------
+% %% Description: Encode RTMP data
+% %%--------------------------------------------------------------------
+
+% encode(type, S, {Type, Msg}) ->
+% 	case Type of
+% 		?RTMP_PCM_SET_CHUNK_SIZE ->
+% 			encode(msghead, S, {Type, 4, <<Msg:32>>});
+% 		?RTMP_PCM_ACKNOWLEDGEMENT ->
+% 			encode(msghead, S, {Type, 4, <<Msg:32>>});
+% 		?RTMP_PCM_USER_CONTROL_MESSAGE ->
+% 			case Msg of
+% 				{?RTMP_UCM_SET_BUFFER_LENGTH, {StreamId, BufferLength}} ->
+% 					encode(msghead, S, {Type, 10, <<?RTMP_UCM_SET_BUFFER_LENGTH:16, StreamId:32, BufferLength:32>>});
+% 				{EventType, EventData} ->
+% 					encode(msghead, S, {Type, 6, <<EventType:16, EventData:32>>})
+% 			end;
+% 		?RTMP_PCM_ACKNOWLEDGEMENT_WINDOW_SIZE ->
+% 			encode(msghead, S, {Type, 4, <<Msg:32>>});
+% 		?RTMP_PCM_SET_PEER_BANDWIDTH ->
+% 			{Size, LimitType} = Msg,
+% 			encode(msghead, S, {Type, 5, <<Size:32, LimitType:8>>});
+% 		?RTMP_MSG_AUDIO ->
+% 			encode(msghead, S, {Type, byte_size(Msg), Msg});
+% 		?RTMP_MSG_VIDEO ->
+% 			encode(msghead, S, {Type, byte_size(Msg), Msg});
+% 		?RTMP_MSG_DATA_AMF0 ->
+% 			Bin = amf0:encode_args(Msg),
+% 			encode(msghead, S, {Type, byte_size(Bin), Bin});
+% 		?RTMP_MSG_COMMAND_AMF0 ->
+% 			Bin = amf0:encode_args(Msg),
+% 			encode(msghead, S, {Type, byte_size(Bin), Bin});
+% 		Type ->
+% 			lager:warning("encode: nomatch Type: ~p", [Type]),
+% 			{noreply, S}
+% 	end;
+
+% encode(msghead, S, {Type, Len, Bin}) when S#state.type == Type, S#state.len == Len -> % fmt == 2
+% 	{Ts, Tsd} = get_timestamp_diff(S#state.ts),
+% 	encode(chunk, S#state{ts = Ts}, <<2:2, (S#state.csidb)/bitstring, Tsd:24>>, Bin);
+
+% encode(msghead, S, {Type, Len, Bin}) when S#state.type == Type -> %fmt == 1
+% 	{Ts, Tsd} = get_timestamp_diff(S#state.ts),
+% 	encode(chunk, S#state{ts = Ts, len = Len}, <<1:2, (S#state.csidb)/bitstring, Tsd:24, Len:24, Type:8>>, Bin);
+
+% encode(msghead, S, {Type, Len, Bin}) ->
+% 	case Type of
+% 		?RTMP_MSG_AUDIO ->
+% 			encode(msghead, S#state{type = Type, len = Len}, {Type, Bin});
+% 		?RTMP_MSG_VIDEO ->
+% 			encode(msghead, S#state{type = Type, len = Len}, {Type, Bin});
+% 		?RTMP_MSG_DATA_AMF0 ->
+% 			encode(msghead, S#state{type = Type, len = Len}, {Type, Bin});
+% 		?RTMP_MSG_COMMAND_AMF0 ->
+% 			encode(msghead, S#state{type = Type, len = Len}, {Type, Bin});
+% 		_CMD ->
+% 			encode(msghead, S#state{len = Len}, {Type, Bin})
+% 	end;
+
+% encode(msghead, S, {Type, Bin}) -> % fmt == 0
+% 	{Ts, Tsd} = get_timestamp_diff(S#state.fts),
+% 	encode(chunk, S#state{ts = Ts}, <<0:2, (S#state.csidb)/bitstring, Tsd:24, (S#state.len):24, Type:8, (S#state.sid):32>>, Bin).
+
+% encode(chunk, S, _Head, <<>>) ->
+% 	{noreply, S};
+
+% encode(chunk, S, Head, Bin) ->
+% 	case byte_size(Bin) > S#state.csize of
+% 		true ->
+% 			{P, R} = split_binary(Bin, S#state.csize),
+% 			encode(send, S, <<Head/binary, P/binary>>, R);
+% 		false ->
+% 			encode(send, S, <<Head/binary, Bin/binary>>, <<>>)
+% 	end;
+
+% encode(send, S, Chunk, Bin) ->
+% 	case gen_tcp:send(S#state.socket, Chunk) of
+% 		ok ->
+% 			encode(chunk, S, <<3:2, (S#state.csidb)/bitstring>>, Bin);
+% 		{error, Reason} ->
+% 			lager:error("encode: gen_tcp:send() error:~n~p", [Reason]),
+% 			{stop, {error, Reason}, S}
+% 	end.
+
+% get_timestamp_diff(Ts1) ->
+% 	Ts2 = now(),
+% 	{Ts2, round(timer:now_diff(Ts2, Ts1)/1000)}.

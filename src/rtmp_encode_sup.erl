@@ -1,22 +1,23 @@
-%%%-------------------------------------------------------------------
-%%% File        : rtmp_encode_sup.erl
-%%% Author      : Artem A. Ekimov <ekimov-artem@ya.ru>
-%%% Description : Supervisor API and callbacks module
-%%% Created     : 28.04.2012
-%%%-------------------------------------------------------------------
+%%====================================================================
+%% Description: RTMP application supervisor for rtmp_encode
+%%====================================================================
 
 -module(rtmp_encode_sup).
+-copyright("LiveTex").
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
+-date("2013-09-10").
+-version("0.1").
+
+%%--------------------------------------------------------------------
 
 -bahaviour(supervisor).
 
 -include("rtmp.hrl").
 
 %% API functions
-
--export([start/0, start_link/0]).
+-export([start/0, start_link/0, start_encode/1]).
 
 %% supervisor callbacks
-
 -export([init/1]).
 
 %%====================================================================
@@ -28,6 +29,9 @@ start() ->
 
 start_link() ->
 	supervisor:start_link({local, ?MODULE}, ?MODULE, []).
+
+start_encode(Args) ->
+	supervisor:start_child(?MODULE, Args).
 
 %%====================================================================
 %% supervisor callbacks
