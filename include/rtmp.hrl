@@ -12,7 +12,7 @@
 -define(SEND_SUP, rtmp_send_sup).
 -define(TABLE_STREAMS, streams).
 -define(TITLE_LENGTH, "16").
--define(LOG(M,P,F,D), rtmp:log(M,P,F,D)).
+-define(LOG(M,P,F,D), lager:debug(F,D)).
 
 %%% PCM - Protocol Control Message					
 													
@@ -60,6 +60,7 @@
 																{?RTMP_CONST_ACKNOWLEDGEMENT_WINDOW_SIZE, 2}}).
 -define(RTMP_CMD_UCM_STREAM_BEGIN(N), 						{?RTMP_PCM_USER_CONTROL_MESSAGE, 
 																	{?RTMP_UCM_STREAM_BEGIN, N}}).
+-define(RTMP_CMD_AMF0,										1).
 -define(RTMP_CMD_AMF0_RTMPSAMPLEACCESS,						6). %		{?RTMP_MSG_DATA_AMF0, [{?STRING, "|RtmpSampleAccess">>, false, false]}).
 -define(RTMP_CMD_AMF0_RESULT_CONNECT,						7).
 -define(RTMP_CMD_AMF0_RESULT_CREATE_STREAM,					8).
@@ -68,3 +69,5 @@
 -define(RTMP_CMD_AMF0_ONSTATUS_NETSTREAM_PLAY_START,		11).
 -define(RTMP_CMD_AMF0_ONSTATUS_NETSTREAM_PLAY_RESET,		12).
 -define(RTMP_CMD_AMF0_ONSTATUS_NETSTREAM_PLAY_STOP,			13).
+
+-define(State, State#state). %{}
