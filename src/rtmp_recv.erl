@@ -3,7 +3,6 @@
 %%====================================================================
 
 -module(rtmp_recv).
--copyright("LiveTex").
 -author("Artem Ekimov <ekimov-artem@ya.ru>").
 -date("2013-09-11").
 -version("0.1").
