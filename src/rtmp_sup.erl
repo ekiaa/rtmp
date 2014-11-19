@@ -40,7 +40,7 @@ init([]) ->
 		{rtmp_decode_sup, {rtmp_decode_sup, start, []}, permanent, infinity, supervisor, [rtmp_decode_sup]},
 		{rtmp_encode_sup, {rtmp_encode_sup, start, []}, permanent, infinity, supervisor, [rtmp_encode_sup]},
 		{rtmp_publish_sup, {rtmp_publish_sup, start, []}, permanent, infinity, supervisor, [rtmp_publish_sup]},
-		{rtmp_accept, {rtmp_accept, start, []}, permanent, 5000, worker, [rtmp_accept]}
+		{rtmp_accept, {rtmp_accept, start_link, []}, permanent, 5000, worker, [rtmp_accept]}
 	]}}.
 
 	
