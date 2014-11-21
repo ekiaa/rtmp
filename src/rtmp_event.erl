@@ -3,11 +3,8 @@
 %%====================================================================
 
 -module(rtmp_event).
--author("Artem Ekimov <ekimov-artem@ya.ru>").
--date("2013-09-09").
--version("0.1").
 
-%%--------------------------------------------------------------------
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
 
 %% API functions
 -compile(export_all).
@@ -17,7 +14,6 @@
 %%====================================================================
 
 start_link() ->
-	% lager:debug("rtmp_event:start_link()"),
 	gen_event:start_link({local, ?MODULE}).
 
 add_handler(Handler, Args) ->

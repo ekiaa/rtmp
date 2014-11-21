@@ -1,13 +1,10 @@
 %%====================================================================
-%% Description : Accept new connection for RTMP channels
+%% Description: accept RTMP connections
 %%====================================================================
 
 -module(rtmp_accept).
--author("Artem Ekimov <ekimov-artem@ya.ru>").
--date("2013-09-10").
--version("0.1").
 
-%%--------------------------------------------------------------------
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
 
 -behaviour(gen_server).
 
@@ -16,7 +13,7 @@
 %% API functions
 -export([start_link/0]).
 
-%% supervisor callbacks
+%% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 %%====================================================================
@@ -30,10 +27,6 @@ start_link() ->
 %% gen_server callbacks
 %%====================================================================
 
-%%--------------------------------------------------------------------
-%% Description : Initiates the accepter
-%%--------------------------------------------------------------------
-
 init([]) ->
 	self() ! listen,
 	Port = rtmp:get_env(rtmp_listen_port, 1935),
@@ -43,21 +36,15 @@ init(Args) ->
 	{stop, {?MODULE, ?LINE, no_matching, Args}}.
 
 %%--------------------------------------------------------------------
-%% Description : Handling call stop message
-%%--------------------------------------------------------------------
 	
 handle_call(Request, _From, State) ->
 	{stop, {?MODULE, ?LINE, no_matching, Request}, {error, no_matching}, State}.
 
 %%--------------------------------------------------------------------
-%% Description : Handling cast error message from accepter
-%%--------------------------------------------------------------------
 
 handle_cast(Message, State) ->
 	{stop, {?MODULE, ?LINE, no_matching, Message}, State}.
 
-%%--------------------------------------------------------------------
-%% Description : Handling all non call/cast messages
 %%--------------------------------------------------------------------
 
 handle_info(listen, #{listened := false, lport := LPort} = State) ->
@@ -93,14 +80,10 @@ handle_info(Info, State) ->
 	{stop, {?MODULE, ?LINE, no_matching, Info}, State}.
 
 %%--------------------------------------------------------------------
-%% Description : Terminate gen_server
-%%--------------------------------------------------------------------
 
 terminate(normal, _) -> ok;
 terminate(Reason, State) -> lager:error("terminate~nReason: ~p~nState: ~p", [Reason, State]).
 
-%%--------------------------------------------------------------------
-%% Description : Convert process state when code is changed
 %%--------------------------------------------------------------------
 
 code_change(_OldVsn, State, _Extra) ->
