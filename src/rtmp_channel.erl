@@ -105,7 +105,7 @@ handle_info(init, #{socket := Socket} = State) ->
 			rtmp_encode:create_stream(Encode, ?CMDSID),
 			{ok, Decode} = rtmp_decode:start(self(), Socket, Encrypted, KeyIn),
 			erlang:monitor(process, Decode),
-			{noreply, State#{decode => Decode, encode => Encode, sid => ?CMDSID + 1, list => [Stream]}};
+			{noreply, State#{decode => Decode, encode => Encode, sid => ?CMDSID + 1, list => [{?CMDSID, SREF, Stream}]}};
 		{error, Reason} ->
 			{stop, {?MODULE, ?LINE, error, Reason}, State}
 	end;
@@ -135,15 +135,15 @@ code_change(_OldVsn, State, _Extra) ->
 %%--------------------------------------------------------------------
 
 manage_message(internal, Message, SID, #{list := List} = State) ->
-	case find_map(sid, SID, List) of
+	case lists:keyfind(SID, 1, List) of
 		false -> {error, {?MODULE, ?LINE, error, not_found}, State};
-		Stream -> stream_message(Message, Stream, State)
+		{_SID, _SREF, Stream} -> stream_message(Message, Stream, State)
 	end;
 
 manage_message(external, Message, SREF, #{list := List} = State) ->
-	case find_map(ref, SREF, List) of
+	case lists:keyfind(SREF, 2, List) of
 		false -> {error, {?MODULE, ?LINE, error, not_found}, State};
-		Stream -> stream_message(Message, Stream, State)
+		{_SID, _SREF, Stream} -> stream_message(Message, Stream, State)
 	end.
 
 %%--------------------------------------------------------------------
@@ -153,11 +153,12 @@ stream_message({command, [{?STRING, "connect"}, _TrID, Object | _Rest]}, _Stream
 	{noreply, State};
 
 stream_message({command, [{?STRING, "createStream"}, TrID | _]}, _CMDStream, #{encode := Encode, list := List, sid := SID} = State) ->
-	Stream = init_map(#{ref => erlang:make_ref(), sid => SID, gsid => rtmp:get_id()}, ?NEW_STREAM),
+	SREF = erlang:make_ref(),
+	Stream = init_map(#{ref => SREF, sid => SID, gsid => rtmp:get_id()}, ?NEW_STREAM),
 	rtmp_encode:create_stream(Encode, SID),
 	rtmp_encode:send_message(Encode, ?CMDSID, rtmp:cmd(?RTMP_CMD_AMF0_RESULT_CREATE_STREAM, {TrID, SID})),
 	rtmp_encode:send_message(Encode, SID, ?RTMP_CMD_UCM_STREAM_BEGIN(SID)),
-	{noreply, State#{list => [Stream | List], sid => SID + 1}};
+	{noreply, State#{list => [{SID, SREF, Stream} | List], sid => SID + 1}};
 
 stream_message({command, [{?STRING, "closeStream"}, 0.0, null]}, #{play := Play, ref := Ref, sid := SID, name := Name, gsid := GSID}, #{encode := Encode} = State) when Play ->
 	lager:debug("stream_message: closeStream: ~p; Player", [Ref]),
@@ -190,6 +191,7 @@ stream_message({command, [{?STRING, CMD}, 0.0, null, Params]}, _Stream, State) -
 
 stream_message({asknowledgement_window_size, AckWinSize}, _Stream, #{encode := Encode, decode := Decode} = State) ->
 	rtmp_decode:setAckWinSize(Decode, AckWinSize),
+	% rtmp_encode:send_message(Encode, ?CMDSID, ?RTMP_CMD_PCM_SET_CHUNK_SIZE(4096)),
 	rtmp_encode:send_message(Encode, ?CMDSID, ?RTMP_CMD_UCM_STREAM_BEGIN(0)),
 	rtmp_encode:send_message(Encode, ?CMDSID, rtmp:cmd(?RTMP_CMD_AMF0_RESULT_CONNECT, {1})),
 	{noreply, State};
@@ -246,11 +248,11 @@ stream_message(_Message, _Stream, State) ->
 
 %%--------------------------------------------------------------------
 
-save_stream(#{sid := SID} = Stream, #{list := List} = State) ->
-	State#{list => replace_map(sid, SID, List, Stream)}.
+save_stream(#{sid := SID, ref := SREF} = Stream, #{list := List} = State) ->
+	State#{list => lists:keyreplace(SID, 1, List, {SID, SREF, Stream})}.
 
 delete_stream(#{sid := SID}, #{list := List} = State) ->
-	State#{list => delete_map(sid, SID, List)}.
+	State#{list => lists:keydelete(SID, 1, List)}.
 
 %%--------------------------------------------------------------------
 
