@@ -258,31 +258,4 @@ delete_stream(#{sid := SID}, #{list := List} = State) ->
 
 init_map(Values, Map) ->
 	maps:fold(fun(K, V, M) -> case maps:is_key(K, M) of true -> maps:put(K, V, M); false -> M end end, Map, Values).
-
-find_map(_, _, []) ->
-	false;
-find_map(Key, Value, [Map | Rest]) ->
-	case maps:get(Key, Map, '$no_matching') of
-		Value -> Map;
-		_ -> find_map(Key, Value, Rest)
-	end.
-
-delete_map(Key, Value, List) ->
-	delete_map(Key, Value, List, []).
-delete_map(_, _, [], List) ->
-	List;
-delete_map(Key, Value, [Map | Rest], List) ->
-	case maps:get(Key, Map, '$no_matching') of
-		Value -> List ++ Rest;
-		_ -> delete_map(Key, Value, Rest, [Map | List])
-	end.
-
-replace_map(Key, Value, List, NewMap) ->
-	replace_map(Key, Value, List, [], NewMap).
-replace_map(_, _, [], List, _) ->
-	List;
-replace_map(Key, Value, [Map | Rest], List, NewMap) ->
-	case maps:get(Key, Map, '$no_matching') of
-		Value -> List ++ [NewMap | Rest];
-		_ -> replace_map(Key, Value, Rest, [Map | List], NewMap)
-	end.
+	
