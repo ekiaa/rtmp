@@ -131,7 +131,7 @@ code_change(_OldVsn, State, _Extra) ->
 	{ok, State}.
 
 %%--------------------------------------------------------------------
-%%% Internal functions
+%% Internal functions
 %%--------------------------------------------------------------------
 
 manage_message(internal, Message, SID, #{list := List} = State) ->

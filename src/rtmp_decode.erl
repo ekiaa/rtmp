@@ -1,13 +1,10 @@
 %%====================================================================
-%%% Description : RTMP connection
+%%% Description : RTMP decode 
 %%====================================================================
 
 -module(rtmp_decode).
--author("Artem Ekimov <ekimov-artem@ya.ru>").
--date("2013-09-10").
--version("0.1").
 
-%%--------------------------------------------------------------------
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
 
 -behaviour(gen_server).
 
@@ -85,16 +82,12 @@ init(Args) ->
 	{stop, {error, nomatch}}.
 	
 %%--------------------------------------------------------------------
-%% Description: Handling call messages
-%%--------------------------------------------------------------------
 
 handle_call(Request, _From, State) ->
 	lager:error("handle_call: nomatch Request:~n~p", [Request]),
 	Error = {error, nomatch},
 	{stop, Error, Error, State}.
 	
-%%--------------------------------------------------------------------
-%% Description: Handling cast messages
 %%--------------------------------------------------------------------
 
 handle_cast(recv, #{socket := Socket} = State) ->	
@@ -127,8 +120,6 @@ handle_cast(Msg, State) ->
 	{stop, {error, nomatch}, State}.
 
 %%--------------------------------------------------------------------
-%% Description: Handling all non call/cast messages
-%%--------------------------------------------------------------------
 
 handle_info({'DOWN', _MonRef, process, _Pid, _Info}, State) ->
 	{stop, normal, State};
@@ -138,16 +129,12 @@ handle_info(Info, State) ->
 	{stop, {error, nomatch}, State}.
 	
 %%--------------------------------------------------------------------
-%% Description: terminate process
-%%--------------------------------------------------------------------
 
 terminate(Reason, #{socket := Socket}) ->
 	catch gen_tcp:close(Socket),
 	lager:debug("terminate: ~p", [Reason]),
 	ok.
 
-%%--------------------------------------------------------------------
-%% Description: Convert process state when code is changed
 %%--------------------------------------------------------------------
 
 code_change(_OldVsn, State, _Extra) ->
@@ -166,8 +153,6 @@ ackwinsize(#{channel := Channel, received := Received, sended := Sended} = State
 			State#{received => Received + DataSize}
 	end.
 
-%%--------------------------------------------------------------------
-%% Description: Decode RTMP data
 %%--------------------------------------------------------------------
 
 decode(Data, #{encrypted := Encrypted, keyin := KeyIn, decode_state := DecodeState, chunk_stream := ChunkStream, buffer := Buffer} = State) ->

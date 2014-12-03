@@ -3,11 +3,8 @@
 %%====================================================================
 
 -module(rtmp_encode_sup).
--author("Artem Ekimov <ekimov-artem@ya.ru>").
--date("2013-09-10").
--version("0.1").
 
-%%--------------------------------------------------------------------
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
 
 -bahaviour(supervisor).
 
