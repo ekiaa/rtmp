@@ -34,16 +34,16 @@
 		buffer       => <<>>
 	}).
 
--define(CHUNK_STREAM_STATE,
+-define(CHUNK_STREAM_STATE(CSID, REF),
 	#{
 		stream   => undefined, 
 		sid      => undefined, 
-		csid     => undefined, 
+		csid     => CSID, 
 		ts       => undefined, 
 		tsd      => undefined, 
 		len      => 0, 
 		type     => undefined, 
-		ref      => undefined, 
+		ref      => REF, 
 		received => 0, 
 		csize    => ?RTMP_CONST_CHUNK_SIZE, 
 		data     => <<>>
@@ -173,12 +173,12 @@ decode(bh, State, CS, Buf)											-> {ok, State#{decode_state => bh, chunk_st
 
 %% Chunk stream ID
 decode({csid, Fmt, CSID}, #{list := List} = State, undefined, Buf) ->
-	NewCS = #{csid => CSID, ref => erlang:make_ref()},
+	NewCS = ?CHUNK_STREAM_STATE(CSID, erlang:make_ref()),
 	decode({mh, Fmt}, State#{list => [{CSID, NewCS} | List]}, NewCS, Buf);
 decode({csid, Fmt, CSID}, #{list := List} = State, #{csid := CurrCSID} = CS, Buf) when CurrCSID /= CSID ->
 	case lists:keyfind(CSID, 1, List) of
 		false ->
-			NewCS = #{csid => CSID, ref => erlang:make_ref()},
+			NewCS = ?CHUNK_STREAM_STATE(CSID, erlang:make_ref()),
 			decode({mh, Fmt}, State#{list => [{CSID, NewCS} | lists:keyreplace(CurrCSID, 1, List, {CurrCSID, CS})]}, NewCS, Buf);
 		{CSID, NextCS} ->
 			decode({mh, Fmt}, State#{list => lists:keyreplace(CurrCSID, 1, List, {CurrCSID, CS})}, NextCS, Buf)

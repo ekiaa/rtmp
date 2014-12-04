@@ -193,7 +193,7 @@ encode({msghead, Type, Bin}, #{sid := SID, fts := Fts, len := Len, csid_bin := C
 encode({fmt_0, Type, Len, Bin}, #{sid := SID, csid_bin := CSIDBin} =  Stream, State) ->
 	encode({chunk, <<0:2, CSIDBin/bitstring, 0:24, Len:24, Type:8, (SID * 16#1000000):32>>, Bin, <<>>}, Stream#{len => Len}, State);
 
-encode({chunk, Head, Bin, Buf}, #{csize := CSize, csid_bin := CSIDBin} = Stream, State) ->
+encode({chunk, Head, Bin, Buf}, #{csid_bin := CSIDBin} = Stream, #{csize := CSize} = State) ->
 	case byte_size(Bin) > CSize of
 		true ->
 			{Payload, Rest} = split_binary(Bin, CSize),
@@ -202,7 +202,7 @@ encode({chunk, Head, Bin, Buf}, #{csize := CSize, csid_bin := CSIDBin} = Stream,
 			encode({crypt, <<Buf/binary, Head/binary, Bin/binary>>}, Stream, State)
 	end;
 
-encode({crypt, Buf}, #{encrypted := Encrypted} = Stream, #{keyout := KeyOut} = State) ->
+encode({crypt, Buf}, Stream, #{encrypted := Encrypted, keyout := KeyOut} = State) ->
 	case Encrypted of
 		true ->
 			{KeyOut1, EncryptedData} = crypto:stream_encrypt(KeyOut, Buf),
@@ -214,7 +214,7 @@ encode({crypt, Buf}, #{encrypted := Encrypted} = Stream, #{keyout := KeyOut} = S
 encode({send, Data}, #{sid := StreamID} = Stream, #{socket := Socket, list := List} = State) ->
 	case gen_tcp:send(Socket, Data) of
 		ok ->
-			{ok, State#{list => lists:keyreplace(StreamID, 1, List, Stream)}};
+			{ok, State#{list => lists:keyreplace(StreamID, 1, List, {StreamID, Stream})}};
 		{error, Reason} ->
 			lager:error("encode: gen_tcp:send() error:~n~p", [Reason]),
 			{error, Reason}
