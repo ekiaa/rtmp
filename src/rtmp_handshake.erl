@@ -48,15 +48,23 @@
 %% API external functions
 -export([init/1]).
 
-%% State record
--record(state, {socket, version, encrypted = false, client_type, keyin, keyout}).
+-define(HANDSHAKE_STATE, 
+	#{
+		socket      => undefined,
+		version     => undefined,
+		encrypted   => false,
+		client_type => undefined,
+		keyin       => undefined,
+		keyout      => undefined
+	}).
 
 %%====================================================================
 %% API functions
 %%====================================================================
 
 init(Socket) ->
-	handshake(#state{socket = Socket}).
+	State = ?HANDSHAKE_STATE,
+	handshake(State#{socket => Socket}).
 
 handshake(State) ->
 	handshake(init, State).
@@ -64,16 +72,16 @@ handshake(State) ->
 handshake(init, State) ->
 	handshake(handshake_C0, State);
 
-handshake(handshake_C0, State) ->
-	case gen_tcp:recv(?State.socket, 1, 10000) of
+handshake(handshake_C0, #{socket := Socket} = State) ->
+	case gen_tcp:recv(Socket, 1, 10000) of
 		{ok, <<Version:8>>} ->
 			case Version of
 				?RTMP_UNCRYPTED_CONNECTION ->
 					lager:debug("handshake: RTMP connection"),
-					handshake(handshake_C1, ?State{version = Version});
+					handshake(handshake_C1, State#{version => Version});
 				?RTMP_ENCRYPTED_CONNECTION ->
 					lager:debug("handshake: RTMPE connection"),
-					handshake(handshake_C1, ?State{version = Version, encrypted = true});
+					handshake(handshake_C1, State#{version => Version, encrypted => true});
 				true ->
 					lager:error("handshake: nomatch Version: ~p", [Version]),
 					{error, nomatch}
@@ -83,43 +91,42 @@ handshake(handshake_C0, State) ->
 			{error, Reason}
 	end;
 
-handshake(handshake_C1, State) ->
-	case gen_tcp:recv(?State.socket, ?RTMP_HS_BODY_LEN, 10000) of
+handshake(handshake_C1, #{socket := Socket} = State) ->
+	case gen_tcp:recv(Socket, ?RTMP_HS_BODY_LEN, 10000) of
 		{ok, C1} ->
 			Type = get_client_type(C1),
-			% lager:debug("handshake: client type: ~p", [Type]),
-			handshake({handshake_S0, C1}, ?State{client_type = Type});
+			handshake({handshake_S0, C1}, State#{client_type => Type});
 		{error, Reason} ->
 			lager:error("handshake: gen_tcp:recv() error:~n~p", [Reason]),
 			{error, Reason}
 	end;
 
-handshake({handshake_S0, C1}, State) when ?State.version == ?RTMP_ENCRYPTED_CONNECTION ->
+handshake({handshake_S0, C1}, #{version := ?RTMP_ENCRYPTED_CONNECTION, client_type := ClientType} = State) ->
 	Bin = <<0:32, 3:8, 0:8, 2:8, 1:8, (crypto:rand_bytes(?RTMP_HS_BODY_LEN - 8))/binary>>,
-	{_, ClientPublic, _} = get_dh_key(?State.client_type, C1),
+	{_, ClientPublic, _} = get_dh_key(ClientType, C1),
 	{ServerPublic, SharedSecret} = generate_dh(ClientPublic),
-	{ServerFirst, _, ServerRest} = get_dh_key(?State.client_type, Bin),
+	{ServerFirst, _, ServerRest} = get_dh_key(ClientType, Bin),
 	Response = <<ServerFirst/binary, ServerPublic/binary, ServerRest/binary>>,
 	{KeyIn, KeyOut} = crypto_keys(ServerPublic, ClientPublic, SharedSecret),
-	handshake({handshake_S1_S2, Response, C1}, ?State{keyin = KeyIn, keyout = KeyOut});
+	handshake({handshake_S1_S2, Response, C1}, State#{keyin => KeyIn, keyout => KeyOut});
 
-handshake({handshake_S0, C1}, State) when ?State.version == ?RTMP_UNCRYPTED_CONNECTION ->
+handshake({handshake_S0, C1}, #{version := ?RTMP_UNCRYPTED_CONNECTION} = State) ->
 	Response = <<0:32, 3:8, 0:8, 2:8, 1:8, (crypto:rand_bytes(?RTMP_HS_BODY_LEN - 8))/binary>>,
 	handshake({handshake_S1_S2, Response, C1}, State);
 
-handshake({handshake_S1_S2, Response, C1}, State) ->
-	{Digest1, _, Digest2} = client_digest(?State.client_type, Response),
+handshake({handshake_S1_S2, Response, C1}, #{socket := Socket, version := Version, client_type := ClientType} = State) ->
+	{Digest1, _, Digest2} = client_digest(ClientType, Response),
 	{ServerFMSKey, _} = erlang:split_binary(?GENUINE_FMS_KEY, 36),
 	ServerDigest = hmac256:digest_bin(ServerFMSKey, <<Digest1/binary, Digest2/binary>>),
 	S1 = <<Digest1/binary, ServerDigest/binary, Digest2/binary>>,
 
 	Response2 = crypto:rand_bytes(?RTMP_HS_BODY_LEN - 32),
-	{_, ClientDigest, _} = client_digest(?State.client_type, C1),
+	{_, ClientDigest, _} = client_digest(ClientType, C1),
 	TempHash = hmac256:digest_bin(?GENUINE_FMS_KEY, ClientDigest),
 	ClientHash = hmac256:digest_bin(TempHash, Response2),
 	S2 = <<Response2/binary, ClientHash/binary>>,
 	
-	case gen_tcp:send(?State.socket, <<(?State.version):8, S1/binary, S2/binary>>) of
+	case gen_tcp:send(Socket, <<Version:8, S1/binary, S2/binary>>) of
 		ok ->
 			% lager:debug("handshake: send S1 and S2 ok"),
 			handshake(handshake_C2, State);
@@ -128,10 +135,10 @@ handshake({handshake_S1_S2, Response, C1}, State) ->
 			{error, Reason}
 	end;
 
-handshake(handshake_C2, State) ->
-	case gen_tcp:recv(?State.socket, ?RTMP_HS_BODY_LEN) of
+handshake(handshake_C2, #{socket := Socket, encrypted := Encrypted, keyin := KeyIn, keyout := KeyOut}) ->
+	case gen_tcp:recv(Socket, ?RTMP_HS_BODY_LEN) of
 		{ok, _C2} ->
-			{ok, {?State.encrypted, ?State.keyin, ?State.keyout}};
+			{ok, {Encrypted, KeyIn, KeyOut}};
 		{error, Reason} ->
 			lager:error("handshake: gen_tcp:recv() error:~n~p", [Reason]),
 			{error, Reason}
@@ -184,18 +191,18 @@ get_dh_key(Offset, C1) ->
 generate_dh(ClientPublic) ->
 	P = <<(size(?DH_P)):32, ?DH_P/binary>>,
 	G = <<(size(?DH_G)):32, ?DH_G/binary>>,
-	{<<?DH_KEY_SIZE:32, ServerPublic:?DH_KEY_SIZE/binary>>, Private} = crypto:dh_generate_key([P, G]),
-	SharedSecret = crypto:dh_compute_key(<<(size(ClientPublic)):32, ClientPublic/binary>>, Private, [P, G]),
+	{<<?DH_KEY_SIZE:32, ServerPublic:?DH_KEY_SIZE/binary>>, Private} = crypto:generate_key(dh, [P, G]),
+	SharedSecret = crypto:compute_key(dh, <<(size(ClientPublic)):32, ClientPublic/binary>>, Private, [P, G]),
 	{ServerPublic, SharedSecret}.
 
 crypto_keys(ServerPublic, ClientPublic, SharedSecret) ->
 	KeyOut1 = rc4_key(SharedSecret, ClientPublic),
 	KeyIn1 = rc4_key(SharedSecret, ServerPublic),
 	D1 = crypto:rand_bytes(?RTMP_HS_BODY_LEN),
-	{KeyIn, D2} = crypto:rc4_encrypt_with_state(KeyIn1, D1),
-	{KeyOut, _} = crypto:rc4_encrypt_with_state(KeyOut1, D2),
+	{KeyIn, D2} = crypto:stream_encrypt(KeyIn1, D1),
+	{KeyOut, _} = crypto:stream_encrypt(KeyOut1, D2),
 	{KeyIn, KeyOut}.
 
 rc4_key(Key, Data) ->
 	<<Out:16/binary, _/binary>> = hmac256:digest_bin(Key, Data),
-	crypto:rc4_set_key(Out).
+	crypto:stream_init(rc4, Out).

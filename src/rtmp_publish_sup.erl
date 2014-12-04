@@ -3,11 +3,8 @@
 %%====================================================================
 
 -module(rtmp_publish_sup).
--author("Artem Ekimov <ekimov-artem@ya.ru>").
--date("2014-03-06").
--version("0.1").
 
-%%--------------------------------------------------------------------
+-author("Artem Ekimov <ekimov-artem@ya.ru>").
 
 -bahaviour(supervisor).
 
